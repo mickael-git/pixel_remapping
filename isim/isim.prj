@@ -1,0 +1,6 @@
+vhdl work "../pkg_pixel_remapping.vhd"
+vhdl work "../pixel_remapping.vhd"
+vhdl work "../ram_sdp_reg.vhd"
+
+vhdl work "tb_pixel_remapping.vhd"
+vhdl work "sensor_model.vhd"
