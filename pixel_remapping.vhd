@@ -9,6 +9,51 @@
 --  2 of the License, or (at your option) any later version.
 ------------------------------------------------------------------------
 
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- CMV12000 sensor outputs pixels line by line but in 1 line it can output
+-- more than 1 pixel/clk, there are up to 32 outputs (lanes)
+-- Positions of the lanes in the line depend depend of the number of lanes
+-- and they are at the distance of each others, for example in the case
+-- of 16 lanes positions are:
+--   0, 256, 512, 768, 1024, 1280, 1536, 1792, 2048, 2304, 2560, 2816
+--   3072, 3328, 3584, 3840
+-- So at each clock we get 16 pixels but they are not adjacent, to solve
+-- this problem we are going to write pixels in a memory and at the end
+-- of the line we read the pixels in the good order
+--
+-- Example for a line of 32 pixels with 4 lanes (8 pixels/lane)
+-- Output of each lane:
+-- t0 : 0 , 8, 16, 24
+-- t1 : 1 , 9, 17, 25
+-- t2 : 2 ,10, 18, 26
+-- ...
+--
+-- It uses as many RAM as the number of lanes
+--
+-- Writing sequence
+--           t0  t1  t2  t3  t4  t5  t6  t7  t8  t9
+-- -------------------------------------------------
+-- address | 0   1   2   3   4   5   6   7       0
+-- -------------------------------------------------
+-- ram0    | 0   25  18  11  4   29  22  15  -   0
+-- ram1    | 8   1   26  19  12  5   30  23  -   8
+-- ram2    | 16  9   2   27  20  13  6   31  -   16
+-- ram3    | 24  17  10  3   28  21  14  7   -   24
+--
+-- Reading sequence (1,0 means ram1 and address 0)
+--        t0    t1    t2    t3    t4    t5    t6    t7
+-- -----------------------------------------------------
+-- out0 | 0,0   0,4   1,0   1,4   2,0   2,4   3,0   3,4
+-- out1 | 1,1   1,5   2,1   2,5   3,1   3,5   0,1   3,5
+-- out2 | 2,2   2,6   3,2   3,6   0,2   0,6   1,2   3,6
+-- out3 | 3,3   3,7   0,3   0,7   1,3   1,7   2,3   3,7
+--
+-- Before being able to ouput data it is necessary to wait 1 line,
+-- this delay is made with a RAM that we start to read at the end of the
+-- first line of the frame
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -119,6 +164,7 @@ begin
     end if;
   end process;
 
+-- switch memory zone at the end of each line
   process(clk)
   begin
     if rising_edge(clk) then
@@ -132,6 +178,7 @@ begin
 
 mem_addr_wr <= msb_addr_wr & addr_wr;
 
+-- calculate which lane to assign to RAM 0 .. NB_LANES-1
   process(clk)
     variable sel  : unsigned(NB_LANES_WIDTH-1 downto 0) := (others=>'0');
   begin
@@ -169,7 +216,7 @@ end generate;
       if lval_rd = '0' then
         sel := (others=>'0');
       elsif (dval_rd = '1') then
-        sel := sel + 16;
+        sel := sel + NB_LANES;
       end if;
       for i in 0 to NB_LANES-1 loop
         addr(i) <= sel + i;
@@ -177,6 +224,7 @@ end generate;
     end if;
   end process;
 
+-- calculate pointer for address and data
   process(clk)
     variable cnt_lane  : unsigned(NB_LANES_WIDTH-1 downto 0) := (others=>'0');
   begin
@@ -195,6 +243,7 @@ end generate;
     end if;
   end process;
 
+-- assign reading address to each RAM
 gen_addr_rd:
 for i in 0 to NB_LANES-1 generate
   process(clk)
@@ -207,6 +256,7 @@ for i in 0 to NB_LANES-1 generate
   end process;
 end generate;
 
+-- update zone when a new line starts
   process(clk)
   begin
     if rising_edge(clk) then
@@ -221,6 +271,7 @@ for i in 0 to NB_LANES-1 generate
   mem_addr_rd(i) <= msb_addr_rd & addr_rd(i);
 end generate;
 
+-- assign data output of each RAM to 1 output
 gen_out:
 for i in 0 to NB_LANES-1 generate
   process(clk)
